@@ -6,10 +6,6 @@ author: Gabriel Carvalho Santana
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
-import cv2
-import os
-from tqdm.auto import trange, tqdm
-
 
 class ResidualBlock(tf.keras.layers.Layer):
     def __init__(self, channels, **kwargs):

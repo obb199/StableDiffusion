@@ -10,10 +10,10 @@ import tensorflow as tf
 class ResidualBlock(tf.keras.layers.Layer):
     def __init__(self, channels, **kwargs):
         super().__init__(**kwargs)
-        self.main_convolutions = [tf.keras.layers.Conv2D(channels, kernel_size=1, padding='same'),
-                                  tf.keras.layers.Conv2D(channels, kernel_size=3, padding='same'),
-                                  tf.keras.layers.BatchNormalization(),
-                                  tf.keras.layers.Activation('swish')]
+        self.main_convolutions = [tf.keras.layers.GroupNormalization(),
+                                  tf.keras.layers.Activation('swish'),
+                                  tf.keras.layers.Conv2D(channels, kernel_size=1, padding='same'),
+                                  tf.keras.layers.Conv2D(channels, kernel_size=3, padding='same')]
 
         self.sec_convolution = tf.keras.layers.Conv2D(channels, kernel_size=1, padding='same')
 

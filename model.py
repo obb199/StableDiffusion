@@ -120,53 +120,52 @@ class UNet(tf.keras.layers.Layer):
 
 
 class StableDiffusion(tf.keras.Model):
-    def __init__(self,
-                 image_shape,
-                 init_conv_filters,
-                 dim_embedding,
+    def __init__(self, 
+                 image_shape, 
+                 init_conv_filters, 
+                 dim_embedding, 
                  unet_filters,
-                 timestep=15,
-                 batch_size=16,
-                 lr_decay=0.98,
-                 shuffle_data=True,
-                 save_weights=False,
+                 timesteps=15,
+                 batch_size=16, 
+                 lr_decay=0.98, 
+                 shuffle_data=True, 
+                 save_weights=False, 
                  file_path_weights='',
                  **kwargs):
-
+        
         super().__init__(**kwargs)
-        self.model = UNet(image_shape,
-                          init_conv_filters,
-                          dim_embedding,
-                          unet_filters,
+        self.model = UNet(image_shape, 
+                          init_conv_filters, 
+                          dim_embedding, 
+                          unet_filters, 
                           **kwargs)
-
-        self.image_shape = image_shape
-        self.timestep = timestep
-        self.timebar = 1 - np.linspace(0, 1.0, timestep + 1)
-        self.batch_size = batch_size
-        self.lr_decay = lr_decay
-        self.shuffle_data = shuffle_data
-        self.save_weights = save_weights
+        
+        self.image_shape       = image_shape
+        self.timesteps         = timesteps
+        self.timebar           = 1 - np.linspace(0, 1.0, timesteps + 1)
+        self.batch_size        = batch_size
+        self.lr_decay          = lr_decay
+        self.shuffle_data      = shuffle_data
+        self.save_weights      = save_weights
         self.fiel_path_weights = file_path_weights
-
+        
     def call(self, x):
         return self.model(x)
-
-    def forward_noise(self, x, t: int):
-        t1 = self.timebar[t].reshape((-1, 1, 1, 1))  # base on t
+    
+    def forward_noise(self, x, t:int):
+        t1 = self.timebar[t].reshape((-1, 1, 1, 1))      # base on t
         t2 = self.timebar[t + 1].reshape((-1, 1, 1, 1))  # image for t + 1
 
-        noise = np.random.normal(
-            size=[self.batch_size, self.image_shape[0], self.image_shape[1], self.image_shape[2]])  # noise mask
+        noise = np.random.normal(size=[self.batch_size, self.image_shape[0], self.image_shape[1], self.image_shape[2]])  # noise mask
 
         img_a = x * (1 - t1) + noise * (t1)
         img_b = x * (1 - t2) + noise * (t2)
-
+        
         return img_a, img_b
-
+    
     def train(self, R=10):
         def train_one(x_img):
-            x_ts = np.random.randint(0, TIMESTEPS, size=len(x_img))
+            x_ts = np.random.randint(0, self.timesteps, size=len(x_img))
             x_a, x_b = self.forward_noise(x_img, x_ts)
             loss = self.train_on_batch([x_a, x_ts], x_b)
             return loss
@@ -174,36 +173,38 @@ class StableDiffusion(tf.keras.Model):
         bar = trange(R)
         for i in bar:
             for j in range(0, len(dataset), self.batch_size):
-                if j + BATCH_SIZE < len(dataset):
-                    image_batch = dataset[j:j + self.batch_size]
+                if j + self.batch_size < len(dataset):
+                    image_batch = dataset[j:j+self.batch_size]
                     loss_image_batch = train_one(image_batch)
-                    pg = (j / BATCH_SIZE)
+                    pg = (j/self.batch_size)
                     bar.set_description(f'loss: {loss_image_batch:.5f}, batch: {pg}')
 
-            model.optimizer.learning_rate = model.optimizer.learning_rate * self.lr_decay
+            model.optimizer.learning_rate = model.optimizer.learning_rate*self.lr_decay
             np.random.shuffle(dataset)
-
+    
     def generate_samples(self, n_creations: int):
         gens = np.random.normal(size=(n_creations, IMG_SIZE[0], IMG_SIZE[1], 3))
         for i in trange(TIMESTEPS):
             gens = self.predict([gens, np.full((n_creations), i)], verbose=0)
-        show_examples(gens, n_creations // 5, 5)
-
+        show_examples(gens, n_creations//5, 5)
+    
     def generate_sample_steps(self):
         xs = []
         x = np.random.normal(size=(TIMESTEPS, IMG_SIZE[0], IMG_SIZE[1], 3))
 
         for i in trange(TIMESTEPS):
             t = i
-            x = self.predict([x, np.full((TIMESTEPS), t)], verbose=0)
+            x = self.predict([x, np.full((TIMESTEPS),  t)], verbose=0)
             xs.append(x[0])
 
         plt.figure(figsize=(20, 20))
         for i in range(len(xs)):
-            plt.subplot(10, 10, i + 1)
-            plt.imshow((xs[i] - xs[i].min()) / (xs[i].max() - xs[i].min()))
+            plt.subplot(10, 10, i+1)
+            plt.imshow((xs[i]-xs[i].min())/(xs[i].max()-xs[i].min()))
             plt.title(f'{i}')
             plt.axis('off')
+
+    
 
 
 

@@ -73,7 +73,7 @@ class UNet(tf.keras.layers.Layer):
         self.first_conv = tf.keras.layers.Conv2D(init_conv_filters, kernel_size=3, padding='same')
         self.last_conv = tf.keras.layers.Conv2D(input_shape[-1], kernel_size=1, padding='same')
 
-        self.init_input_process = [tf.keras.layers.Embedding(1, dim_embedding),
+        self.init_input_process = [tf.keras.layers.Flatten(),
                                    tf.keras.layers.Dense(dim_embedding),
                                    tf.keras.layers.LayerNormalization(),
                                    tf.keras.layers.Activation('swish')]

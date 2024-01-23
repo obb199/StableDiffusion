@@ -190,9 +190,9 @@ class StableDiffusion(tf.keras.Model):
     
     def generate_sample_steps(self):
         xs = []
-        x = np.random.normal(size=(TIMESTEPS, IMG_SIZE[0], IMG_SIZE[1], 3))
+        x = np.random.normal(size=(self.timesteps, image_shape[0], image_shape[1], image_shape[2]))
 
-        for i in trange(TIMESTEPS):
+        for i in trange(self.timesteps):
             t = i
             x = self.predict([x, np.full((TIMESTEPS),  t)], verbose=0)
             xs.append(x[0])

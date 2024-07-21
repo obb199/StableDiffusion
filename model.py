@@ -69,7 +69,7 @@ class ProcessBlock(tf.keras.layers.Layer):
     def call(self, x):
         x[2] = self.embedding_layer(x[2])
         x[0] = self.residual1(x[0])
-        x[1] = self.residual2(x[1]) + self.residual3(x[1])*x[0]
+        x[1] = x[0] + self.residual2(x[1]) + self.residual3(x[1])*x[2]
         return self.residual4(x[1])
 
 

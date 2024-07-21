@@ -1,5 +1,5 @@
 """
-Implementation of a Stable Diffusion Model with Unet and residual blocks.
+Implementation of a Stable Diffusion Model with Unet and residual blocks with transformers.
 author: Gabriel Carvalho Santana
 """
 
@@ -8,205 +8,288 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 
 class ResidualBlock(tf.keras.layers.Layer):
-    def __init__(self, channels, **kwargs):
+    def __init__(self, filters, change_filters, attention=False, **kwargs):
         super().__init__(**kwargs)
-        self.main_convolutions = [tf.keras.layers.GroupNormalization(),
+        self.main_convolutions = [tf.keras.layers.GroupNormalization(32),
                                   tf.keras.layers.Activation('swish'),
-                                  tf.keras.layers.Conv2D(channels, kernel_size=1, padding='same'),
-                                  tf.keras.layers.Conv2D(channels, kernel_size=3, padding='same')]
+                                  tf.keras.layers.Conv2D(filters, kernel_size=1, padding='same'),
+                                  tf.keras.layers.Conv2D(filters, kernel_size=3, padding='same'),
+                                  tf.keras.layers.GroupNormalization(32),
+                                  tf.keras.layers.Activation('swish'),
+                                  tf.keras.layers.Conv2D(filters, kernel_size=1, padding='same'),
+                                  tf.keras.layers.Conv2D(filters, kernel_size=3, padding='same')]
 
-        self.sec_convolution = tf.keras.layers.Conv2D(channels, kernel_size=1, padding='same')
-
+        if change_filters:
+            self.sec_convolution = tf.keras.layers.Conv2D(filters, kernel_size=1, padding='same')
+        else:
+            self.sec_convolution = lambda x: x
+        
+        if attention:
+            self.attention_block = [tf.keras.layers.GroupNormalization(32),
+                                    tf.keras.layers.MultiHeadAttention(num_heads=32, key_dim=filters, attention_axes=(1, 2))]
+        else:
+            self.attention_block = False
+        
     def call(self, x):
-        data = tf.identity(x)
-
+        data = tf.identity(x)        
         for conv in self.main_convolutions:
             data = conv(data)
-
-        if data.shape[-1] != x.shape[-1]:
-            x = self.sec_convolution(x)
-
-        return data + x
-
-
-class ImageTimeProcessBlock(tf.keras.layers.Layer):
-    def __init__(self, process_dimension, **kwargs):
-        super().__init__(**kwargs)
-        self.image_process = ResidualBlock(process_dimension)
-
-        self.time_process = [tf.keras.layers.Dense(process_dimension),
-                             tf.keras.layers.LayerNormalization(),
-                             tf.keras.layers.Activation("swish"),
-                             tf.keras.layers.Dense(process_dimension),
-                             tf.keras.layers.LayerNormalization(),
-                             tf.keras.layers.Activation("swish"),
-                             tf.keras.layers.Reshape([1, 1, process_dimension])]
-
-        self.image_time_process = [ResidualBlock(process_dimension),
-                                   tf.keras.layers.LayerNormalization(),
-                                   tf.keras.layers.Activation('swish')]
-
-    def call(self, x):
-        image, time = x[0], x[1]
-
-        image = self.image_process(image)
-
-        for layer in self.time_process:
-            time = layer(time)
-
-        output = self.image_time_process[0](x[0])
-        output += image * time
-        output = self.image_time_process[1](output)
-        output = self.image_time_process[2](output)
-
-        return output
-
-
-class UNet(tf.keras.layers.Layer):
-    def __init__(self, input_shape, init_conv_filters, dim_embedding, unet_filters, **kwargs):
-        super().__init__(**kwargs)
-
-        self.first_conv = tf.keras.layers.Conv2D(init_conv_filters, kernel_size=3, padding='same')
-        self.last_conv = tf.keras.layers.Conv2D(input_shape[-1], kernel_size=1, padding='same')
-
-        self.init_input_process = [tf.keras.layers.Flatten(),
-                                   tf.keras.layers.Dense(dim_embedding),
-                                   tf.keras.layers.LayerNormalization(),
-                                   tf.keras.layers.Activation('swish')]
-
-        self.left_layers = [ImageTimeProcessBlock(c) for c in unet_filters]
-        self.right_layers = [ImageTimeProcessBlock(c) for c in unet_filters]
-
-        self.mid_layers = [
-            tf.keras.layers.Flatten(),
-            tf.keras.layers.Dense(
-                input_shape[0] // (2 ** (len(unet_filters))) * input_shape[1] // (2 ** (len(unet_filters))) *
-                unet_filters[-1]),
-            tf.keras.layers.LayerNormalization(),
-            tf.keras.layers.Activation('swish'),
-            tf.keras.layers.Reshape(
-                [input_shape[0] // (2 ** (len(unet_filters))), input_shape[1] // (2 ** (len(unet_filters))),
-                 unet_filters[-1]])
-        ]
-
-        self.avgpool = tf.keras.layers.MaxPooling2D(padding='same')
-        self.upsampling = tf.keras.layers.UpSampling2D()
-
-    def call(self, x):
-        image, time = x[0], x[1]
-        image = self.first_conv(image)
-
-        for init_process_layer in self.init_input_process:
-            time = init_process_layer(time)
-
-        left_res = []
-
-        for left_layer in self.left_layers:
-            image = left_layer([image, time])
-            image = self.avgpool(image)
-            left_res.append(image)
-
-        for mid_layer in self.mid_layers:
-            image = mid_layer(image)
-
-        i = -1
-        for right_layer in self.right_layers:
-            image = tf.concat([image, left_res[i]], -1)
-            image = right_layer([image, time])
-            image = self.upsampling(image)
-            i -= 1
-
-        return self.last_conv(image)
-
-
-class StableDiffusion(tf.keras.Model):
-    def __init__(self, 
-                 image_shape, 
-                 init_conv_filters, 
-                 dim_embedding, 
-                 unet_filters,
-                 timesteps=15,
-                 batch_size=16, 
-                 lr_decay=0.98, 
-                 shuffle_data=True, 
-                 save_weights=False, 
-                 file_path_weights='',
-                 **kwargs):
         
+        if self.attention_block:
+            x = self.attention_block[0](x)
+            x = self.attention_block[1](x, x)
+            
+        return data + self.sec_convolution(x)
+
+
+class TimeEmbedding(tf.keras.layers.Layer):
+    def __init__(self, channels, **kwargs):
         super().__init__(**kwargs)
-        self.model = UNet(image_shape, 
-                          init_conv_filters, 
-                          dim_embedding, 
-                          unet_filters, 
-                          **kwargs)
-        
-        self.image_shape       = image_shape
-        self.timesteps         = timesteps
-        self.timebar           = 1 - np.linspace(0, 1.0, timesteps + 1)
-        self.batch_size        = batch_size
-        self.lr_decay          = lr_decay
-        self.shuffle_data      = shuffle_data
-        self.save_weights      = save_weights
-        self.fiel_path_weights = file_path_weights
+        self.denselayers = [tf.keras.layers.Activation('swish'),
+                            tf.keras.layers.Dense(channels*4),
+                            tf.keras.layers.Activation('swish'),
+                            tf.keras.layers.Dense(channels),
+                            tf.keras.layers.Reshape([1, 1, channels])]
         
     def call(self, x):
-        return self.model(x)
+        for layer in self.denselayers:
+            x = layer(x)
+        
+        return x
+
+class ProcessBlock(tf.keras.layers.Layer):
+    def __init__(self, filters, change_filters, attention=False, **kwargs):
+        super().__init__(**kwargs)
+        self.embedding_layer = TimeEmbedding(filters)
+        self.residual1       = ResidualBlock(filters, True, attention)
+        self.residual2       = ResidualBlock(filters, change_filters, attention)
+        self.residual3       = ResidualBlock(filters, change_filters, attention)
+        self.residual4       = ResidualBlock(filters, change_filters, attention)
+
+    def call(self, x):
+        x[2] = self.embedding_layer(x[2])
+        x[0] = self.residual1(x[0])
+        x[1] = self.residual2(x[1]) + self.residual3(x[1])*x[0]
+        return self.residual4(x[1])
+
+
+class Model(tf.keras.Model):
+    def __init__(self, **kwargs):
+        super().__init__()
     
-    def forward_noise(self, x, t:int):
-        t1 = self.timebar[t].reshape((-1, 1, 1, 1))      # base on t
-        t2 = self.timebar[t + 1].reshape((-1, 1, 1, 1))  # image for t + 1
+        self.time_process = [tf.keras.layers.Dense(1024),
+                             tf.keras.layers.Activation('swish'),
+                             tf.keras.layers.Dense(1024)]
 
-        noise = np.random.normal(size=[self.batch_size, self.image_shape[0], self.image_shape[1], self.image_shape[2]])  # noise mask
-
-        img_a = x * (1 - t1) + noise * (t1)
-        img_b = x * (1 - t2) + noise * (t2)
+        self.init_conv = [tf.keras.layers.Conv2D(32, kernel_size=1, padding='same'),
+                          ResidualBlock(64, True)]
         
+        self.init_seed = [tf.keras.layers.Conv2D(32, kernel_size=1, padding='same'),
+                          ResidualBlock(64, True)]
+
+        # ---------------- left  ---------------
+        self.left = [ProcessBlock(128, True),
+                     ProcessBlock(128, False),
+                     ProcessBlock(128, False),
+                     ProcessBlock(128, False),
+                     ProcessBlock(128, False),
+                     ProcessBlock(128, False),
+                     ProcessBlock(256, True, True),
+                     ProcessBlock(256, False, True),
+                     ProcessBlock(256, True, True)]
+        
+        self.stride_convs = [tf.keras.layers.Conv2D(filters=128, kernel_size=3, padding='same', strides=2),
+                             tf.keras.layers.Conv2D(filters=128, kernel_size=3, padding='same', strides=2),
+                             tf.keras.layers.Conv2D(filters=256, kernel_size=3, padding='same', strides=2),
+                             tf.keras.layers.Conv2D(filters=256, kernel_size=3, padding='same', strides=2)]
+        
+        # --------------- mid ----------------
+        self.mid = [ResidualBlock(512, True),
+                    ResidualBlock(512, False)]
+
+        # ----------------right----------------
+        self.right = [ProcessBlock(256, True, True),
+                      ProcessBlock(256, True, True),
+                      ProcessBlock(256, True, True),
+                      ProcessBlock(128, True),
+                      ProcessBlock(128, True),
+                      ProcessBlock(128, True),
+                      ProcessBlock(128, True),
+                      ProcessBlock(128, True),
+                      ProcessBlock(128, True)]
+        
+        self.stride_transp = [tf.keras.layers.Conv2DTranspose(filters=256, kernel_size=3, padding='same', strides=2),
+                              tf.keras.layers.Conv2DTranspose(filters=256, kernel_size=3, padding='same', strides=2),
+                              tf.keras.layers.Conv2DTranspose(filters=128, kernel_size=3, padding='same', strides=2),
+                              tf.keras.layers.Conv2DTranspose(filters=128, kernel_size=3, padding='same', strides=2)]
+        
+
+        self.concat = tf.keras.layers.Concatenate()
+
+        self.end = [tf.keras.layers.GroupNormalization(32),
+                    tf.keras.layers.Activation('swish'),
+                    tf.keras.layers.Conv2D(3, kernel_size=1, padding='same')]
+    
+    def call(self, x):
+        seed, x_input, x_ts = x[0], x[1], x[2]
+        left_outputs = []
+        
+        for layer in self.time_process:
+            x_ts = layer(x_ts)
+        x_input = self.init_conv[1](self.init_conv[0](x_input))
+        seed    = self.init_seed[1](self.init_seed[0](seed))
+        
+        z = 0
+        for idx in range(0, len(self.left), 3):
+            if idx != 0:
+                x_input = self.stride_convs[z](x_input)
+                seed    = self.stride_convs[z+1](seed)
+                z += 2
+                
+            x_input = self.left[idx]([seed, x_input, x_ts])
+            left_outputs.append(x_input)
+            x_input = self.left[idx+1]([seed, x_input, x_ts])
+            left_outputs.append(x_input)
+            x_input = self.left[idx+2]([seed, x_input, x_ts])
+            left_outputs.append(x_input)
+        
+        x = self.mid[0](x_input)
+        for layer in self.mid[1:]:
+            x = layer(x)
+        z = 0
+        for idx in range(0, len(self.right), 3):
+            if idx != 0:
+                x = self.stride_transp[z](x)
+                seed = self.stride_transp[z+1](seed)
+                z += 2
+                
+            k = self.concat([x, left_outputs.pop()])
+            x = self.right[idx]([seed, k, x_ts])
+            k = self.concat([x, left_outputs.pop()])
+            x = self.right[idx+1]([seed, k, x_ts])
+            k = self.concat([x, left_outputs.pop()])
+            x = self.right[idx+2]([seed, k, x_ts])
+        
+        for end_layers in self.end:
+            x = end_layers(x)
+        return x
+    
+    def complete_images(self, seed, h, w):
+        noise = np.random.random(size=(h*w, IMG_DIMS[1], IMG_DIMS[0]//2, 3))
+        for i in trange(timesteps):
+            noise = self.predict([seed, noise, np.reshape(np.full((h*w,), i), (-1,1))], verbose=0, batch_size=16)
+        return np.concatenate([seed, noise], axis=2)
+
+class DataGenerator(tf.keras.utils.Sequence):
+    'Generates data for Keras'
+    def __init__(self, data, batch_size, shuffle=True):
+        self.data        = data # array of strings with original images name with directory
+        self.batch_size      = batch_size #images per batch
+        self.shuffle         = shuffle # true or false to shuffle data after any epochs
+        self.on_epoch_end() # call of the function
+
+    
+    def __forward_noise(self, x, t):
+        a = time_bar[t]      # base on t
+        b = time_bar[t + 1]  # image for t + 1
+
+        noise = np.random.random(size=(x.shape[0], IMG_DIMS[1], IMG_DIMS[0]//2, 3))  # noise mask
+        a = a.reshape((-1, 1, 1, 1))
+        b = b.reshape((-1, 1, 1, 1))
+        img_a = x * (1 - a) + noise * a
+        img_b = x * (1 - b) + noise * b
         return img_a, img_b
     
-    def train(self, R=10):
-        def train_one(x_img):
-            x_ts = np.random.randint(0, self.timesteps, size=len(x_img))
-            x_a, x_b = self.forward_noise(x_img, x_ts)
-            loss = self.train_on_batch([x_a, x_ts], x_b)
-            return loss
+    def __generate_ts(self, num):
+        return np.random.randint(0, timesteps, size=num)
 
-        bar = trange(R)
-        for i in bar:
-            for j in range(0, len(dataset), self.batch_size):
-                if j + self.batch_size < len(dataset):
-                    image_batch = dataset[j:j+self.batch_size]
-                    loss_image_batch = train_one(image_batch)
-                    pg = (j/self.batch_size)
-                    bar.set_description(f'loss: {loss_image_batch:.5f}, batch: {pg}')
+    def __len__(self):
+        'Denotes the number of batches per epoch'
+        return int(np.floor(len(self.data) / self.batch_size))
 
-            model.optimizer.learning_rate = model.optimizer.learning_rate*self.lr_decay
-            np.random.shuffle(dataset)
+
+    def __getitem__(self, index):
+        'Generate one batch of data'
+        # Generate indexes of the batch
+        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
+
+        # Find list of IDs
+        indexes_for_batch = [k for k in indexes]
+
+        # Generate data
+        X, y = self.__data_generation(indexes_for_batch)
+        
+        return X, y
+
+    def on_epoch_end(self):
+        'Updates indexes after each epoch'
+        self.indexes = np.arange(len(self.data))
+        if self.shuffle == True:
+            np.random.shuffle(self.indexes)
+
+    def __data_generation(self, indexes_for_batch):
+        'Generates data containing batch_size samples'
+        images_for_train = np.array([self.data[i] for i in indexes_for_batch])
+        timesteps = self.__generate_ts(self.batch_size)
+        imgs_t1, imgs_t2 = self.__forward_noise(images_for_train[:,:,IMG_DIMS[0]//2:,:], timesteps)
+        X = [images_for_train[:,:,0:IMG_DIMS[0]//2,:], imgs_t1, np.array(timesteps).reshape(-1, 1)]
+        y = imgs_t2
+        return X, y
+
+class DataGenerator(tf.keras.utils.Sequence):
+    'Generates data for Keras'
+    def __init__(self, list_IDs, batch_size, dim_img, shuffle=True):
+        self.list_IDs        = list_IDs # array of strings with original images name with directory
+        self.batch_size      = batch_size #images per batch
+        self.dim_img         = dim_img # tuple with width and height of image like (192, 256)
+        self.shuffle         = shuffle # true or false to shuffle data after any epochs
+        self.on_epoch_end() # call of the function
+
     
-    def generate_samples(self, n_creations: int):
-        gens = np.random.normal(size=(n_creations, IMG_SIZE[0], IMG_SIZE[1], 3))
-        for i in trange(TIMESTEPS):
-            gens = self.predict([gens, np.full((n_creations), i)], verbose=0)
-        show_examples(gens, n_creations//5, 5)
+    def __forward_noise(self, x, t):
+        a = time_bar[t]      # base on t
+        b = time_bar[t + 1]  # image for t + 1
+
+        noise = np.random.random(size=(x.shape[0], IMG_SIZE, IMG_SIZE//2, 3))  # noise mask
+        a = a.reshape((-1, 1, 1, 1))
+        b = b.reshape((-1, 1, 1, 1))
+        img_a = x * (1 - a) + noise * a
+        img_b = x * (1 - b) + noise * b
+        return img_a, img_b
     
-    def generate_sample_steps(self):
-        xs = []
-        x = np.random.normal(size=(self.timesteps, image_shape[0], image_shape[1], image_shape[2]))
+    def __generate_ts(self, num):
+        return np.random.randint(0, timesteps, size=num)
 
-        for i in trange(self.timesteps):
-            t = i
-            x = self.predict([x, np.full((TIMESTEPS),  t)], verbose=0)
-            xs.append(x[0])
-
-        plt.figure(figsize=(20, 20))
-        for i in range(len(xs)):
-            plt.subplot(10, 10, i+1)
-            plt.imshow((xs[i]-xs[i].min())/(xs[i].max()-xs[i].min()))
-            plt.title(f'{i}')
-            plt.axis('off')
-
-    
+    def __len__(self):
+        'Denotes the number of batches per epoch'
+        return int(np.floor(len(self.list_IDs) / self.batch_size))
 
 
+    def __getitem__(self, index):
+        'Generate one batch of data'
+        # Generate indexes of the batch
+        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
 
+        # Find list of IDs
+        indexes_for_batch = [k for k in indexes]
 
+        # Generate data
+        X, y = self.__data_generation(indexes_for_batch)
+        
+        return X, y
 
+    def on_epoch_end(self):
+        'Updates indexes after each epoch'
+        self.indexes = np.arange(len(self.list_IDs))
+        if self.shuffle == True:
+            np.random.shuffle(self.indexes)
+
+    def __data_generation(self, indexes_for_batch):
+        'Generates data containing batch_size samples'
+        images_for_train = [cv2.resize(plt.imread(directory + self.list_IDs[i]), (self.dim_img, self.dim_img)) for i in indexes_for_batch]
+        timesteps = self.__generate_ts(self.batch_size)
+        imgs_t1, imgs_t2 = self.__forward_noise(np.array(images_for_train)[:,:,self.dim_img//2:,:], timesteps)
+        X = [np.array(images_for_train)[:,:,0:self.dim_img//2,:], imgs_t1, np.array(timesteps).reshape(-1, 1)]
+        y = imgs_t2
+
+        return X, y

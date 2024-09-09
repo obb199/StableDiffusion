@@ -1,5 +1,5 @@
 """
-Implementation of a Deep Denoising Diffusion Model with Unet and residual blocks with transformers.
+Alternative implementation for Deep Denoising Diffusion Model.
 author: Gabriel Carvalho Santana
 """
 

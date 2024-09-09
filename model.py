@@ -1,5 +1,5 @@
 """
-Implementation of a Stable Diffusion Model with Unet and residual blocks with transformers.
+Implementation of a Deep Denoising Diffusion Model with Unet and residual blocks with transformers.
 author: Gabriel Carvalho Santana
 """
 
